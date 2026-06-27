@@ -1,68 +1,61 @@
-const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
-const { nanoid } = require('nanoid');
+const express = require("express");
+const sqlite3 = require("sqlite3").verbose();
+const bodyParser = require("body-parser");
+const path = require("path");
+const { nanoid } = require("nanoid");
 
 const app = express();
-const PORT = process.env.PORT || 3000; // <-- Ye line Railway ke liye hai
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
+// Railway ka PORT use karo. Local pe 3000 chalega
+const PORT = process.env.PORT || 3000; 
 
-// Database Setup - Railway pe bhi ban jayegi
-const db = new sqlite3.Database('./ablink.db', (err) => {
-  if (err) {
-    console.error('DB Error:', err.message);
-  } else {
-    console.log('Connected to SQLite DB');
-    db.run(`CREATE TABLE IF NOT EXISTS links (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      short_code TEXT UNIQUE NOT NULL,
-      long_url TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      clicks INTEGER DEFAULT 0
-    )`);
-  }
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+
+// DB file Railway me /data folder me banegi
+const dbPath = path.join(__dirname, "links.db");
+const db = new sqlite3.Database(dbPath);
+
+db.run(`CREATE TABLE IF NOT EXISTS links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  short_code TEXT UNIQUE NOT NULL,
+  original_url TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
+
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// Route 1: Home Page
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Route 2: Short URL Banane Ka API
-app.post('/api/shorten', (req, res) => {
-  const { longUrl } = req.body;
-  if (!longUrl || !longUrl.startsWith('http')) {
-    return res.status(400).json({ error: 'Valid URL dalo bhai' });
-  }
+app.post("/shorten", (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: "URL required" });
 
   const shortCode = nanoid(6);
-  
-  db.run('INSERT INTO links (short_code, long_url) VALUES (?, ?)', [shortCode, longUrl], function(err) {
-    if (err) {
-      return res.status(500).json({ error: 'DB me save nahi hua' });
+
+  db.run(
+    "INSERT INTO links (short_code, original_url) VALUES (?, ?)",
+    [shortCode, url],
+    function (err) {
+      if (err) return res.status(500).json({ error: "DB error" });
+      const shortUrl = `${req.protocol}://${req.get("host")}/${shortCode}`;
+      res.json({ shortUrl });
     }
-    const shortUrl = `${req.headers.host}/${shortCode}`;
-    res.json({ shortUrl: `https://${shortUrl}` });
-  });
+  );
 });
 
-// Route 3: Redirect Karne Wala
-app.get('/:code', (req, res) => {
+app.get("/:code", (req, res) => {
   const { code } = req.params;
-  db.get('SELECT long_url FROM links WHERE short_code = ?', [code], (err, row) => {
-    if (err || !row) {
-      return res.status(404).send('Link nahi mila');
-    }
-    db.run('UPDATE links SET clicks = clicks + 1 WHERE short_code = ?', [code]);
-    res.redirect(row.long_url);
+  db.get("SELECT original_url FROM links WHERE short_code = ?", [code], (err, row) => {
+    if (err) return res.status(500).send("DB error");
+    if (!row) return res.status(404).send("Link not found");
+    res.redirect(row.original_url);
   });
 });
 
-// Server Start - Ye line sabse important hai
+// Yahan PORT variable use hua hai
 app.listen(PORT, () => {
-  console.log(`Ablink server running on PORT: ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
